@@ -120,10 +120,16 @@ Aqui solicitamos a contagem total de linhas inseridas na tabela.
 ```sql
 SELECT COUNT(*) FROM olist_customers;
 ```
+
+<p align="center">
+  <img src="docs/olist_customers_count.png" alt="Contagem de clientes Olist" style="max-width:80%;">
+</p>
+
 Agora, solicitamos as 10 primeiras linhas de toda a tabela.
 ```sql
 SELECT COUNT(*) FROM olist_customers;
 ```
+
 
 
 
