@@ -130,6 +130,8 @@ Agora, solicitamos as 10 primeiras linhas de toda a tabela.
 SELECT COUNT(*) FROM olist_customers;
 ```
 
-
+<p align="center">
+  <img src="docs/olist_customers_limit.png" alt="Query All de clientes Olist" style="max-width:80%;">
+</p>
 
 
