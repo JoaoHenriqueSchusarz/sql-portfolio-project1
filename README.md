@@ -63,6 +63,8 @@ USE olist_data;
 ```
 ## 2 - Criação das Tabelas e Importaçãos dos CSVs
 
+Precisamos criar as tabelas que iremos importar da nossa base de dados disponibilizada pelo Kaggle, no nosso MySQL Workbench. Vou descrever duas criações abaixo, as demais deixei como histórico de produção na pasta Script com o código completo de criação e importação das tabelas: [create_tables.sql](scripts/create_tables.sql)
+
 ### 2.1 - Tabelas Utilizadas no Projeto
 
 Foram utilizados 9 arquivos CSVs do dataset da Olist, cada um representando uma entidade no banco de dados relacional:
@@ -81,7 +83,7 @@ Foram utilizados 9 arquivos CSVs do dataset da Olist, cada um representando uma 
 
 
 ### 2.2 Criação da Tabela e Importação do CSV - `olist_customers`
-A tabela **`olist_customers`** contém os dados básicos dos clientes, como identificador único, CEP, cidade e estado.  
+A tabela `olist_customers` contém os dados básicos dos clientes, como identificador único, CEP, cidade e estado.  
 Ela é importante para análises de localização, distribuição de pedidos e perfil de clientes.
 
 ```sql
@@ -131,7 +133,65 @@ SELECT COUNT(*) FROM olist_customers;
 ```
 
 <p align="center">
-  <img src="docs/olist_customers_limit.png" alt="Query All de clientes Olist" style="max-width:80%;">
+  <img src="docs/olist_customers_limit.png" alt="Query All clientes Olist" style="max-width:80%;">
 </p>
 
+### 2.3 - Criação da Tabela e Importação do CSV - `olist_orders`
+Na tabela `olist_orders`, o processo fugiu do padrão:
+- O `LOAD DATA INFILE` precisou tratar campos de data, utilizando `NULLIF` para evitar erros em valores vazios.
 
+Essa adaptação foi importante para:
+- Manter a consistência referencial entre as tabelas.
+- Garantir que valores obrigatórios estivessem devidamente preenchidos.
+- Tratar corretamente dados nulos durante a importação.
+
+Esse tipo de ajuste reflete a realidade de muitos projetos de dados, em que os datasets não estão 100% prontos para uso e exigem correções pontuais durante a modelagem.
+
+```sql
+CREATE TABLE olist_orders (
+			 order_id VARCHAR(50) NOT NULL,
+             customer_id VARCHAR(50) NOT NULL,
+             order_status VARCHAR(30) NOT NULL,
+             order_purchase_timestamp DATETIME NOT NULL,
+             order_approved_at DATETIME NOT NULL,
+             order_delivered_carrier_date DATETIME NOT NULL,
+             order_delivered_customer_date DATETIME NOT NULL,
+             order_estimated_delivery_date DATETIME NOT NULL,
+             PRIMARY KEY(order_id,customer_id)
+);
+
+TRUNCATE TABLE olist_orders;
+
+LOAD DATA INFILE 'C:/ProgramData/MySQL/MySQL Server 8.0/Uploads/archive/olist_orders_dataset.csv' 
+INTO TABLE olist_orders
+CHARACTER SET utf8mb4
+FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
+ESCAPED BY '"'
+LINES TERMINATED BY '\n'
+IGNORE 1 LINES
+(order_id,customer_id,order_status,@order_purchase_timestamp,@order_approved_at,@order_delivered_carrier_date,@order_delivered_customer_date,@order_estimated_delivery_date)
+SET 
+ order_purchase_timestamp = NULLIF(@order_purchase_timestamp,''),
+ order_approved_at = NULLIF(@order_approved_at,''),
+ order_delivered_carrier_date = NULLIF(@order_delivered_carrier_date,''),
+ order_delivered_customer_date = NULLIF(@order_delivered_customer_date,''),
+ order_estimated_delivery_date = NULLIF(@order_estimated_delivery_date,'');
+```
+Realizando as *queries* para confirmar; quantas linhas foram carregadas e outra, mostrando 10 linhas para visualizar se os dados foram inseridos corretamente em suas respectativas colunas, como a formatação.
+
+Aqui solicitamos a contagem total de linhas inseridas na tabela.
+```sql
+SELECT COUNT(*) FROM olist_orders;
+```
+<p align="center">
+  <img src="docs/olist_orders_count.png" alt="Contagem de orders Olist" style="max-width:80%;">
+</p>
+
+Agora, solicitamos as 10 primeiras linhas de toda a tabela.
+```sql
+SELECT COUNT(*) FROM olist_orders;
+```
+
+<p align="center">
+  <img src="docs/olist_orders_limit.png" alt="Query All orders Olist" style="max-width:80%;">
+</p>
