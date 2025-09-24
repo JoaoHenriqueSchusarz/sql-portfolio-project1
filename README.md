@@ -195,3 +195,13 @@ SELECT COUNT(*) FROM olist_orders;
 <p align="center">
   <img src="docs/olist_orders_limit.png" alt="Query All orders Olist" style="max-width:80%;">
 </p>
+
+### Observações sobre Integridade Referencial
+
+Durante a modelagem, tentei criar chaves estrangeiras (FKs) entre as tabelas para garantir integridade referencial.  
+Porém, o dataset público da Olist possui linhas órfãs (ex.: `customer_id` presente em `olist_orders` mas ausente em `olist_customers`).  
+
+Por esse motivo, não foi possível aplicar algumas FKs sem modificar os dados originais.  
+Optei por não alterar os dados, para manter a fidelidade ao dataset original do Kaggle.  
+
+No entanto, as relações lógicas entre as tabelas foram consideradas em todas as queries analíticas via `JOIN`.
