@@ -372,7 +372,7 @@ SELECT
 FROM data_anterior
 WHERE dt_prev IS NOT NULL
   AND order_id <> order_prev
-GROUP BY categoria
+GROUP BY categoria 
 ORDER BY media_dias_recompra_categoria ASC;
 ```
 
