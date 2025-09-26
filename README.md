@@ -102,7 +102,7 @@ INTO TABLE olist_customers
 CHARACTER SET utf8mb4
 FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
 ESCAPED BY '"'
-LINES TERMINATED BY '\n'     -- <- trocado para \n
+LINES TERMINATED BY '\n' 
 IGNORE 1 LINES
 (customer_id, customer_unique_id, customer_zip_code_prefix, customer_city, customer_state);
 
@@ -214,7 +214,8 @@ Esse tipo de discrepância é comum em datasets públicos e reforça a importân
 Abaixo mostro como em uma `query` conseguimos validar os dados que existem na `olist_products`, e na `product_category_name_translation` esta como NULL.
 
 ```sql
-SELECT DISTINCT op.product_category_name AS products,  odp.product_category_name AS category
+SELECT DISTINCT op.product_category_name AS products,
+				odp.product_category_name AS category
 FROM olist_products op
 LEFT JOIN olist_data.product_category odp
 ON odp.product_category_name = op.product_category_name
@@ -244,24 +245,30 @@ A lógica foi:
 
 ```sql
 (WITH contagem_categoria AS (
-SELECT op.product_category_name AS categoria, COUNT(oi.seller_id) AS contagem
+SELECT op.product_category_name AS categoria,
+       COUNT(oi.seller_id) AS contagem
 FROM olist_products op
 LEFT JOIN olist_order_items oi
 ON oi.product_id = op.product_id
 GROUP BY op.product_category_name
 )
-SELECT categoria, contagem
+SELECT categoria,
+       contagem
 FROM contagem_categoria
 WHERE contagem = (SELECT MAX(contagem) FROM contagem_categoria))
 UNION
 (WITH contagem_categoria AS (
-SELECT op.product_category_name AS categoria, COUNT(oi.seller_id) AS contagem
+SELECT op.product_category_name AS categoria,
+       COUNT(oi.seller_id) AS contagem
 FROM olist_products op
 LEFT JOIN olist_order_items oi
 ON oi.product_id = op.product_id
 GROUP BY op.product_category_name
 )
-SELECT categoria, contagem
+SELECT categoria,
+       contagem
+FROM contagem_categoria
+WHERE contagem = (SELECT MIN(contagem) FROM contagem_categoria));
 ```
 Rodando a query temos como resultado que entre 2016 e 2018, a categoria que mais vendeu e menos vendeu respectativamente:
 
@@ -273,46 +280,40 @@ Rodando a query temos como resultado que entre 2016 e 2018, a categoria que mais
 
 ### Análise Exploratória e Qualidade dos Dados
 
-Como quero apenas Curitiba, logo penso que tanto compradores (`CUSTOMERS`) e vendedore (`SELLERS`), precisam estar filtrados com a cidade de Curitiba. Para conseguir esses dados precisamos pensar em quais dados queremos filtrar nesta query. 
+Para responder essa pergunta, utilizei CTEs (WITH) para quebrar o problema em duas etapas:
 
-Assim, para obter um resultado condizente com o que estamos buscando analisar precisamos inserir nessa query os dados das tabelas: `olist_products`, `olist_order_items`, `olist_customers`, e `olist_sellers`. Usando as funções `INNER JOIN` e `WHERE` , conseguimos juntar os dados na tabela temporária filtrando pela cidade de Curitiba.
-
+1. CTE contagem → calcula, para cada categoria de produto, quantos pedidos distintos (COUNT(DISTINCT oi.order_id)) foram feitos por vendedores de Curitiba, considerando apenas pedidos entregues (o.order_status = 'delivered').
+2. CTE extremos → obtém o valor mínimo e máximo de vendas (MIN e MAX) entre todas as categorias.
+3. Query final → junta os dois resultados e, com a cláusula CASE, identifica se a categoria corresponde ao maior ou ao menor número de vendas.
+   
 ```sql
-(WITH contagem_categoria AS (
-SELECT op.product_category_name AS categoria, COUNT(oi.seller_id) AS contagem
-FROM olist_products op
-LEFT JOIN olist_order_items oi
-ON oi.product_id = op.product_id
-INNER JOIN olist_sellers os
-ON os.seller_id = oi.seller_id
-INNER JOIN olist_customers oc
-ON oc.customer_city = os.seller_city
-AND oc.customer_state = os.seller_state
-AND oc.customer_zip_code_prefix = os.seller_zip_code_prefix
-WHERE os.seller_city = 'curitiba'
-GROUP BY op.product_category_name
+WITH contagem AS (
+  SELECT
+    p.product_category_name AS categoria,
+    COUNT(DISTINCT oi.order_id) AS contagem
+  FROM olist_order_items oi
+  JOIN olist_products     p  ON p.product_id  = oi.product_id
+  JOIN olist_sellers      s  ON s.seller_id   = oi.seller_id
+  JOIN olist_orders       o  ON o.order_id    = oi.order_id
+  WHERE s.seller_city = 'curitiba'
+    AND o.order_status = 'delivered'      
+  GROUP BY p.product_category_name
+),
+extremos AS (
+  SELECT MIN(contagem) AS min_c, MAX(contagem) AS max_c
+  FROM contagem
 )
-SELECT categoria, contagem
-FROM contagem_categoria
-WHERE contagem = (SELECT MAX(contagem) FROM contagem_categoria))
-UNION
-(WITH contagem_categoria AS (
-SELECT op.product_category_name AS categoria, COUNT(oi.seller_id) AS contagem
-FROM olist_products op
-LEFT JOIN olist_order_items oi
-ON oi.product_id = op.product_id
-INNER JOIN olist_sellers os
-ON os.seller_id = oi.seller_id
-INNER JOIN olist_customers oc
-ON oc.customer_city = os.seller_city
-AND oc.customer_state = os.seller_state
-AND oc.customer_zip_code_prefix = os.seller_zip_code_prefix
-WHERE os.seller_city = 'curitiba'
-GROUP BY op.product_category_name
-)
-SELECT categoria, contagem
-FROM contagem_categoria
-WHERE contagem = (SELECT MIN(contagem) FROM contagem_categoria));
+SELECT 
+  c.categoria,
+  c.contagem,
+  CASE 
+    WHEN c.contagem = e.max_c THEN 'max'
+    WHEN c.contagem = e.min_c THEN 'min'
+  END AS tipo
+FROM contagem c
+INNER JOIN extremos e
+ON c.contagem IN (e.min_c, e.max_c)
+ORDER BY c.contagem DESC, c.categoria
 ```
 Com isso verificamos que o resultado difere comparado ao geral das cidades do Brasil.
 
@@ -328,7 +329,9 @@ Com isso verificamos que o resultado difere comparado ao geral das cidades do Br
 - Montei uma base por `(cliente, categoria, pedido, data)` para assim evitar duplicações por múltiplos itens em um mesmo pedido (order_id).
   
 ```sql
-SELECT DISTINCT o.customer_id, p.product_category_name AS categoria, o.order_id, o.order_purchase_timestamp AS dt
+SELECT DISTINCT o.customer_id,
+				p.product_category_name AS categoria,
+                o.order_id, o.order_purchase_timestamp AS dt
 FROM olist_orders o
 JOIN olist_order_items oi ON oi.order_id  = o.order_id
 JOIN olist_products p ON p.product_id = oi.product_id
@@ -345,7 +348,9 @@ LIMIT 15;
 
 ```sql
 WITH compras AS (
-  SELECT DISTINCT o.customer_id, p.product_category_name AS categoria, o.order_id, o.order_purchase_timestamp AS dt
+  SELECT DISTINCT o.customer_id,
+                  p.product_category_name AS categoria,
+                  o.order_id, o.order_purchase_timestamp AS dt
   FROM olist_orders o
   JOIN olist_order_items oi ON oi.order_id   = o.order_id
   JOIN olist_products p ON p.product_id  = oi.product_id
@@ -353,9 +358,11 @@ WITH compras AS (
     AND p.product_category_name IS NOT NULL
 ),
 data_anterior AS (
-  SELECT customer_id, categoria, order_id, dt,
-    LAG(order_id) OVER (PARTITION BY customer_id, categoria ORDER BY dt) AS order_prev,
-    LAG(dt) OVER (PARTITION BY customer_id, categoria ORDER BY dt) AS dt_prev
+  SELECT customer_id,
+         categoria,
+         order_id, dt,
+    	 LAG(order_id) OVER (PARTITION BY customer_id, categoria ORDER BY dt) AS order_prev,
+         LAG(dt) OVER (PARTITION BY customer_id, categoria ORDER BY dt) AS dt_prev
   FROM compras
 )
 SELECT
