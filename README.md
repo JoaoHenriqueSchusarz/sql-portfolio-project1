@@ -320,4 +320,64 @@ Com isso verificamos que o resultado difere comparado ao geral das cidades do Br
   <img src="docs/olist_select_maxmincuritiba_result.png" alt="Query category MAX AND MIN CURITIBA Olist" style="max-width:80%;">
 </p>
 
+## Quais categorias tiveram o menor tempo de recompra?
+
+### Análise Exploratória e Qualidade dos Dados (tentativa e achado)
+
+### Método
+- Montei uma base por `(cliente, categoria, pedido, data)` para assim evitar duplicações por múltiplos itens em um mesmo pedido (order_id).
+  
+```sql
+SELECT DISTINCT o.customer_id, p.product_category_name AS categoria, o.order_id, o.order_purchase_timestamp AS dt
+FROM olist_orders o
+JOIN olist_order_items oi ON oi.order_id  = o.order_id
+JOIN olist_products p ON p.product_id = oi.product_id
+WHERE o.order_status = 'delivered'
+  AND p.product_category_name IS NOT NULL
+LIMIT 15;
+```
+<p align="center">
+  <img src="docs/olist_selectdistinct_result.png" alt="Query SELECT DISTINCT Olist" style="max-width:80%;">
+</p>
+  
+- Usei janelas com `LAG()` particionando por `(cliente, categoria)` para recuperar a compra anterior.
+- Calculei `DATEDIFF(dt, dt_prev)` e agreguei por categoria (média e contagem de intervalos).
+
+```sql
+WITH compras AS (
+  SELECT DISTINCT o.customer_id, p.product_category_name AS categoria, o.order_id, o.order_purchase_timestamp AS dt
+  FROM olist_orders o
+  JOIN olist_order_items oi ON oi.order_id   = o.order_id
+  JOIN olist_products p ON p.product_id  = oi.product_id
+  WHERE o.order_status = 'delivered'
+    AND p.product_category_name IS NOT NULL
+),
+data_anterior AS (
+  SELECT customer_id, categoria, order_id, dt,
+    LAG(order_id) OVER (PARTITION BY customer_id, categoria ORDER BY dt) AS order_prev,
+    LAG(dt) OVER (PARTITION BY customer_id, categoria ORDER BY dt) AS dt_prev
+  FROM compras
+)
+SELECT
+  categoria,
+  ROUND(AVG(DATEDIFF(dt, dt_prev)), 2) AS media_dias_recompra_categoria,
+  COUNT(*) AS n_intervalos
+FROM data_anterior
+WHERE dt_prev IS NOT NULL
+  AND order_id <> order_prev
+GROUP BY categoria
+ORDER BY media_dias_recompra_categoria ASC;
+```
+
+### Achado
+- Ao checar `COUNT(DISTINCT order_id)` por `(cliente, categoria)`, não há pares com 2+ pedidos distintos após os filtros (`order_status = 'delivered'` e categorias não nulas).
+- Resultado: nenhuma categoria apresenta recompra observável nessa configuração do dataset.
+
+<p align="center">
+  <img src="docs/olist_withlag_result.png" alt="Query SELECT DISTINCT Olist" style="max-width:80%;">
+</p>
+
+### Interpretação
+- No recorte utilizado, o Olist mostra alta proporção de clientes de 1ª compra por categoria.
+- Itens repetidos no mesmo pedido não são “recompra” e foram corretamente ignorados.
 
