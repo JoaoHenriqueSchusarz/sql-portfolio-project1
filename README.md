@@ -21,27 +21,18 @@ No total, são 100 mil pedidos, com tabelas que permitem análises completas de 
 Construir e popular um banco de dados relacional no MySQL a partir dos arquivos CSV. Executar queries exploratórias para entender a estrutura dos dados.
 Com a base estudada criar-se consultas analíticas para responder perguntas de negócio, como:
 * Quais categorias tiveram a maior e menor quantidade vendida?
+* Quais categorias tiveram a maior e menor quantidade vendida em Curitiba?
 * Quais categorias tiveram o menor tempo de recompra?
 * Qual o ticket médio, máximo e mínimo dos pedidos?
 * Quanto tempo em média leva para um pedido ser entregue?
 * Qual é a taxa de atraso na entrega?
-* Previsão de vendas para os próximo meses
-
-## Previsão de Vendas Futuras - Olist
-
-Após a consolidação das vendas mensais no MySQL, exportei os dados para Python e utilizei o modelo Prophet (Meta) para prever as vendas futuras. 
-Abaixo um exemplo de gráfico gerado:
-
 
 ## Tecnologias Utilizadas no Projeto
 
 * MySQL 8.0 → criação do banco de dados, modelagem das tabelas e consultas SQL (exploratórias e analíticas).
 * MySQL Workbench → interface gráfica para administração do banco, execução de queries e carga inicial dos dados.
 * Kaggle → fonte do dataset público [Conjunto de dados públicos de comércio eletrônico brasileiro da Olist](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce).
-* Python 3.x → análise de dados e previsão de vendas futuras.
-    * Pandas → manipulação de dados.
-    * Matplotlib/Seaborn → visualizações exploratórias.
-    * Prophet (Meta/Facebook) → modelo de previsão de vendas.
+* Visual Studio Code → criação de documentos comprobatórios de criação, iportação e análise de dados.
 * Git & GitHub → versionamento do projeto e publicação do portfólio.
 * Power BI/Tableau → visualização de dashboards.
 
@@ -205,3 +196,128 @@ Por esse motivo, não foi possível aplicar algumas FKs sem modificar os dados o
 Optei por não alterar os dados, para manter a fidelidade ao dataset original do Kaggle.  
 
 No entanto, as relações lógicas entre as tabelas foram consideradas em todas as queries analíticas via `JOIN`.
+
+# Queries Exploratórias 
+
+## Quais categorias tiveram a maior e menor quantidade vendida?
+
+### Análise Exploratória e Qualidade dos Dados
+
+Ao realizar a query para responder "Quais categorias tiveram a maior e menor quantidade vendida?", identifiquei uma inconsistência entre as tabelas `olist_products` e `product_category_name_translation`.
+
+- A tabela `olist_products` possui 74 categorias distintas.
+- A tabela `product_category_name_translation` possui apenas 71 categorias distintas.
+
+Isso significa que algumas categorias presentes em `olist_products` não têm correspondência na tabela de tradução.  
+Esse tipo de discrepância é comum em datasets públicos e reforça a importância da etapa de análise exploratória antes da modelagem final.
+
+Abaixo mostro como em uma `query` conseguimos validar os dados que existem na `olist_products`, e na `product_category_name_translation` esta como NULL.
+
+```sql
+SELECT DISTINCT op.product_category_name AS products,  odp.product_category_name AS category
+FROM olist_products op
+LEFT JOIN olist_data.product_category odp
+ON odp.product_category_name = op.product_category_name
+WHERE odp.product_category_name IS NULL;
+```
+Abaixo verificamos que apenas dois dados estão sem o real complemento, sendo a primeira linha apenas uma diferença de formatação de dados, onde na `olist_products` o dado foi inserido como campo vazio (" "), e na `product_category_name_translation` o dado foi colocado como NULL.
+
+<p align="center">
+  <img src="docs/olist_select_null_result.png" alt="Query DISTINCT category Olist" style="max-width:80%;">
+</p>
+
+Para não descartar dados relevantes, optei por utilizar um LEFT JOIN partindo da `olist_products`.  
+Dessa forma, todas as categorias são mantidas, e aquelas sem tradução aparecem como `NULL` ou "não identificadas".  
+
+Esse tratamento garante consistência na análise, preserva os dados originais e ao mesmo tempo evidencia lacunas existentes no dataset público.
+
+### Análise e Criação da Query
+
+Para conseguir realizar a query onde mostre o `MAX` e, o `MIN` acompanhado da categoria, utilizei o recurso `WITH` (CTE – Common Table Expression).  
+O `WITH` permite criar uma tabela temporária dentro da consulta (no caso, chamada `contagem_categoria`).  
+Isso deixa a query mais organizada, evita repetição de código (subquery) e facilita reuso — em vez de escrever o mesmo `SELECT ... GROUP BY` duas vezes, defini uma vez na CTE e depois referenciei.
+
+A lógica foi:
+1. Criar a CTE `contagem_categoria` com o total de itens vendidos por categoria, tabela temporária,
+2. Consultar essa CTE duas vezes: uma filtrando o máximo (`MAX`) e outra filtrando o mínimo (`MIN`),
+3. Juntar os dois resultados em uma única saída usando `UNION`.
+
+```sql
+(WITH contagem_categoria AS (
+SELECT op.product_category_name AS categoria, COUNT(oi.seller_id) AS contagem
+FROM olist_products op
+LEFT JOIN olist_order_items oi
+ON oi.product_id = op.product_id
+GROUP BY op.product_category_name
+)
+SELECT categoria, contagem
+FROM contagem_categoria
+WHERE contagem = (SELECT MAX(contagem) FROM contagem_categoria))
+UNION
+(WITH contagem_categoria AS (
+SELECT op.product_category_name AS categoria, COUNT(oi.seller_id) AS contagem
+FROM olist_products op
+LEFT JOIN olist_order_items oi
+ON oi.product_id = op.product_id
+GROUP BY op.product_category_name
+)
+SELECT categoria, contagem
+```
+Rodando a query temos como resultado que entre 2016 e 2018, a categoria que mais vendeu e menos vendeu respectativamente:
+
+<p align="center">
+  <img src="docs/olist_select_maxmin_result.png" alt="Query MAX AND MIN category Olist" style="max-width:80%;">
+</p>
+
+# Quais categorias tiveram a maior e menor quantidade vendida em Curitiba?
+
+### Análise Exploratória e Qualidade dos Dados
+
+Como quero apenas Curitiba, logo penso que tanto compradores (`CUSTOMERS`) e vendedore (`SELLERS`), precisam estar filtrados com a cidade de Curitiba. Para conseguir esses dados precisamos pensar em quais dados queremos filtrar nesta query. 
+
+Assim, para obter um resultado condizente com o que estamos buscando analisar precisamos inserir nessa query os dados das tabelas: `olist_products`, `olist_order_items`, `olist_customers`, e `olist_sellers`. Usando as funções `INNER JOIN` e `WHERE` , conseguimos juntar os dados na tabela temporária filtrando pela cidade de Curitiba.
+
+```sql
+(WITH contagem_categoria AS (
+SELECT op.product_category_name AS categoria, COUNT(oi.seller_id) AS contagem
+FROM olist_products op
+LEFT JOIN olist_order_items oi
+ON oi.product_id = op.product_id
+INNER JOIN olist_sellers os
+ON os.seller_id = oi.seller_id
+INNER JOIN olist_customers oc
+ON oc.customer_city = os.seller_city
+AND oc.customer_state = os.seller_state
+AND oc.customer_zip_code_prefix = os.seller_zip_code_prefix
+WHERE os.seller_city = 'curitiba'
+GROUP BY op.product_category_name
+)
+SELECT categoria, contagem
+FROM contagem_categoria
+WHERE contagem = (SELECT MAX(contagem) FROM contagem_categoria))
+UNION
+(WITH contagem_categoria AS (
+SELECT op.product_category_name AS categoria, COUNT(oi.seller_id) AS contagem
+FROM olist_products op
+LEFT JOIN olist_order_items oi
+ON oi.product_id = op.product_id
+INNER JOIN olist_sellers os
+ON os.seller_id = oi.seller_id
+INNER JOIN olist_customers oc
+ON oc.customer_city = os.seller_city
+AND oc.customer_state = os.seller_state
+AND oc.customer_zip_code_prefix = os.seller_zip_code_prefix
+WHERE os.seller_city = 'curitiba'
+GROUP BY op.product_category_name
+)
+SELECT categoria, contagem
+FROM contagem_categoria
+WHERE contagem = (SELECT MIN(contagem) FROM contagem_categoria));
+```
+Com isso verificamos que o resultado difere comparado ao geral das cidades do Brasil.
+
+<p align="center">
+  <img src="docs/olist_select_maxmincuritiba_result.png" alt="Query category MAX AND MIN CURITIBA Olist" style="max-width:80%;">
+</p>
+
+
