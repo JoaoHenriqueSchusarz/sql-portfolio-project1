@@ -114,3 +114,27 @@ FROM contagem_categoria
 WHERE contagem = (SELECT MIN(contagem) FROM contagem_categoria));
 
 -- Quantidade de pedidos por estado (maior e menor)
+
+WITH contagem AS (
+SELECT os.seller_state AS uf,
+		COUNT(DISTINCT od.order_id) AS count_orders
+FROM olist_orders od
+INNER JOIN olist_order_items oi ON oi.order_id = od.order_id
+INNER JOIN olist_sellers os ON os.seller_id = oi.seller_id
+INNER JOIN olist_customers oc ON oc.customer_id = od.customer_id 
+							AND oc.customer_state = os.seller_state
+GROUP BY uf
+), extremos AS (
+SELECT MAX(c.count_orders) AS max_orders,
+       MIN(c.count_orders) AS min_orders
+FROM contagem c
+)
+SELECT c.uf, c.count_orders,
+CASE 
+    WHEN count_orders =  e.max_orders THEN 'max'
+    WHEN count_orders =  e.min_orders THEN 'min'
+END AS max_or_min
+FROM contagem c
+INNER JOIN extremos e
+ON c.count_orders IN (e.max_orders, e.min_orders)
+ORDER BY c.count_orders DESC, c.uf;
