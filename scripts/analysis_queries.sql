@@ -138,3 +138,143 @@ FROM contagem c
 INNER JOIN extremos e
 ON c.count_orders IN (e.max_orders, e.min_orders)
 ORDER BY c.count_orders DESC, c.uf;
+
+-- O ticket médio, máximo e mínimo dos pedidos
+
+WITH valor AS (
+  SELECT op.order_id, SUM(op.payment_value) AS valores
+  FROM olist_order_payments op
+  GROUP BY op.order_id
+)
+SELECT 
+  ROUND(AVG(valores),2) AS avg_payments,
+  MAX(valores) AS max_payments,
+  MIN(valores) AS min_payments
+FROM valor
+WHERE valores != 0;
+-- Obs: o filtro WHERE valores != 0 é usado para evitar que pedidos com valor zero (possivelmente cancelados) distorçam o ticket mínimo
+
+-- Verificação do tempo entre realizar o pedido e aprovar o pagamento por meios de pagamento
+
+WITH order_type 
+AS(
+SELECT     op.order_id, 
+           op.payment_type AS p_type, 
+	         od.order_purchase_timestamp AS purchase, 
+		       od.order_approved_at        AS approved 
+FROM       olist_data.olist_order_payments op
+INNER JOIN olist_orders od
+ON   	     od.order_id = op.order_id
+WHERE 	   op.payment_type NOT IN ('not_defined','voucher')
+AND        od.order_status NOT IN ('canceled','unavailable')
+), diff 
+AS(
+SELECT     p_type, 
+		       DATEDIFF(approved,purchase) AS diff_date
+FROM       order_type
+)
+SELECT     d.p_type, 
+	         ROUND(AVG(d.diff_date)) AS avg_dif,
+           MAX(d.diff_date)        AS max_diff,
+           MIN(d.diff_date)        AS min_diff
+FROM       diff d
+GROUP BY   d.p_type
+ORDER BY   max_diff DESC;
+
+-- Quanto tempo em média leva para um pedido ser entregue?
+
+-- Verifica se há datas nulas ou inconsistentes combase em status e datas de entrega 
+
+SELECT DISTINCT order_status
+FROM olist_orders
+WHERE order_delivered_carrier_date IS NOT NULL
+  OR order_delivered_customer_date IS NOT NULL
+  OR order_estimated_delivery_date IS NOT NULL;
+
+SELECT COUNT(*) AS total, 
+       SUM(order_delivered_carrier_date IS NULL) AS nulos_carrier,
+       SUM(order_delivered_customer_date IS NULL) AS nulos_customer,
+       SUM(order_estimated_delivery_date IS NULL) AS nulos_estimated,
+       SUM(order_delivered_carrier_date < order_purchase_timestamp) AS inconsist_carrier,
+       SUM(order_delivered_customer_date < order_purchase_timestamp) AS inconsist_customer,
+       SUM(order_estimated_delivery_date < order_purchase_timestamp) AS inconsist_estimated
+FROM olist_orders
+WHERE order_status = 'delivered';
+
+-- Cálculo do tempo médio de entrega (em dias)
+WITH datas AS (
+SELECT 
+	   DATEDIFF(order_delivered_customer_date,order_purchase_timestamp) AS diff
+FROM olist_orders
+WHERE order_delivered_customer_date IS NOT NULL
+  AND order_purchase_timestamp IS NOT NULL
+AND   order_status NOT IN ('canceled','unavailable')
+)
+SELECT ROUND(AVG(diff)) AS avg_delivered_date
+FROM datas;
+
+-- Quanto tempo em média leva para um pedido ser entregue por categoria?
+WITH datas AS (
+SELECT     op.product_category_name AS category,
+	       DATEDIFF(od.order_delivered_customer_date,od.order_purchase_timestamp) AS diff
+FROM  	   olist_orders od
+INNER JOIN olist_order_items oi
+	    ON oi.order_id   = od.order_id
+INNER JOIN olist_products op
+		ON oi.product_id = op.product_id
+WHERE      order_delivered_customer_date IS NOT NULL
+  AND      order_purchase_timestamp      IS NOT NULL
+  AND      order_status NOT IN ('canceled','unavailable')
+  AND      op.product_category_name <> ""
+)
+SELECT category, ROUND(AVG(diff)) AS avg_delivered_date
+FROM datas
+GROUP BY   category
+ORDER BY   avg_delivered_date DESC
+LIMIT 10;
+-- Obs: categorias com poucos pedidos podem distorcer a média. Uma solução seria filtrar por categorias com um número mínimo de pedidos
+
+-- Quanto tempo em média leva para um pedido ser entregue por categorias com um número mínimo de pedidos
+WITH datas AS (
+SELECT     op.product_category_name AS category,
+         DATEDIFF(od.order_delivered_customer_date,od.order_purchase_timestamp) AS diff 
+FROM       olist_orders od
+INNER JOIN olist_order_items oi
+      ON oi.order_id   = od.order_id
+INNER JOIN olist_products op
+    ON oi.product_id = op.product_id
+WHERE      order_delivered_customer_date IS NOT NULL
+  AND      order_purchase_timestamp      IS NOT NULL
+  AND      order_status NOT IN ('canceled','unavailable')
+  AND      op.product_category_name <> ""
+), filtro AS (
+SELECT category
+FROM   datas
+GROUP BY category
+HAVING COUNT(*) >= 50
+)
+SELECT d.category, ROUND(AVG(d.diff)) AS avg_delivered_date
+FROM   datas d
+INNER JOIN filtro f
+ON d.category = f.category
+GROUP BY d.category
+ORDER BY avg_delivered_date DESC
+LIMIT 10;
+-- Obs: o número mínimo de pedidos (neste caso, 50) pode ser ajustado conforme necessário
+
+-- Qual é a taxa de atraso na entrega?
+WITH atraso AS (
+SELECT 
+       CASE 
+           WHEN DATEDIFF(order_delivered_customer_date, order_estimated_delivery_date) > 0 THEN 1
+           ELSE 0
+       END AS is_late
+FROM olist_orders
+WHERE order_delivered_customer_date IS NOT NULL
+  AND order_estimated_delivery_date IS NOT NULL
+  AND order_status NOT IN ('canceled','unavailable')
+) 
+SELECT 
+       ROUND(AVG(is_late) * 100, 2) AS pct_late 
+FROM atraso;
+-- Obs: o resultado é multiplicado por 100 para apresentar a porcentagem
