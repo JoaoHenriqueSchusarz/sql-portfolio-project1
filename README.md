@@ -639,3 +639,76 @@ Esse indicador é fundamental para avaliar:
 <p align="center">
   <img src="docs/olist_perct_delivered_result.png" alt="Query verificação do status e data de entrega" style="max-width:80%;">
 </p>
+
+# Olist Sales Dashboard — Power BI
+
+Análise de vendas e experiência do usuário com o dataset público **Olist** (Kaggle).  
+Foco: receita por estado/ano/categoria, métodos de pagamento, ticket médio e distribuição de reviews.
+
+> Aviso: dashboard não oficial, para fins educacionais. Fonte dos dados: Olist — Brazilian E-commerce Public Dataset (Kaggle).
+
+## Visão Geral
+- Stack: Power BI (modelagem e DAX), MySQL (ingestão/queries), GitHub Pages (publicação).
+- Destaques:
+  - Top 5 categorias **dinâmico** por contexto (estado/ano).
+  - Medidas de **% de reviews por nota** com `DIVIDE` + `ALL`.
+  - Tratamento de duplicidade via grão `(cliente, categoria, pedido, data)`.
+
+## Perguntas de Negócio
+- Quais estados/categorias mais vendem?
+- Como evolui o ticket médio por ano?
+- Como se distribuem as notas de review (1–5)?
+- Qual o tempo médio de entrega?
+- [Exploratória] Recompra por categoria: no recorte usado, 0 intervalos observáveis (alta proporção de primeira compra).
+
+## Prints
+
+Visualização abaixo do Dashboard Vendas:
+
+<p align="center">
+  <img src="dashboard/olist_dashboard_vendas.png" alt="Dashboard Vendas visualização" style="max-width:80%;">
+</p>
+
+Visualização abaixo do Dashboard Experiência do Usuário:
+
+<p align="center">
+  <img src="dashboard/olist_dashboard_experiencia.png" alt="Dashboard experiência do usuário visualização" style="max-width:80%;">
+</p>
+
+# Conclusão Geral
+
+## Conclusão do Projeto
+
+Este projeto teve como objetivo estruturar e analisar o Conjunto de Dados Públicos de E-commerce da Olist, disponível no Kaggle, aplicando conceitos de SQL para exploração, tratamento e análise de dados e Dashboard com a ferramenta Power BI.  
+
+Durante o desenvolvimento:  
+- Criamos um banco de dados relacional no MySQL a partir dos arquivos CSV.  
+- Estruturamos as tabelas com chaves primárias e relacionamentos para dar suporte às consultas analíticas.  
+- Realizamos queries exploratórias e avançadas, respondendo perguntas de negócio relevantes como:  
+  - Quais categorias tiveram maior e menor volume de vendas?  
+  - Qual o tempo médio de entrega dos pedidos?  
+  - Qual a taxa de atraso na entrega?  
+  - Qual o ticket médio das compras?  
+  - Quais padrões de recompra podem ser identificados?  
+- Aplicamos técnicas como CTEs, agregações, funções de data e janelas para consolidar métricas.  
+- Geramos visuais complementares em dashboards (Power BI/Tableau).
+
+### Principais insights
+- Cartão de crédito e débito → aprovação praticamente imediata.  
+- Boletos → apresentaram maior atraso médio e alta variabilidade.  
+- O tempo médio de entrega foi de aproximadamente 9 dias, variando entre categorias e anos.  
+- A taxa de atraso evidenciou que cerca de 6,77% dos pedidos chegaram após o prazo estimado, mostrando pontos de melhoria na logística.  
+
+## Conclusão Dashboard
+
+O dashboard consolida a visão de vendas da base pública da Olist, evidenciando:
+- Forte concentração de receita em poucos estados (com São Paulo liderando).
+- Predominância do cartão de crédito como método de pagamento.
+- As categorias Top 5 variam conforme o contexto (estado/ano).
+- O ticket médio mostra oscilação ao longo do período com tendência de melhora no último ano analisado.
+- Na experiência do usuário, a distribuição das notas de review ajuda a identificar satisfação e pontos de atenção, onde 58% estão avaliando em 5 de nota.
+- Um achado importante de qualidade/escopo de dados: ao medir recompra por categoria, não houve intervalos observáveis no recorte utilizado (pedidos “delivered” e categorias válidas), sugerindo alta proporção de primeiras compras por categoria. 
+
+###  Considerações finais
+O estudo demonstrou como SQL pode ser usado para responder perguntas reais de negócio e gerar indicadores estratégicos.  
+Além disso, reforça a importância da integração entre análise de dados, modelagem estatística e visualização, criando um portfólio sólido para projetos de Data Analytics.  
