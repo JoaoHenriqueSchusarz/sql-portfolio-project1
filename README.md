@@ -25,6 +25,7 @@ Com a base estudada criar-se consultas analíticas para responder perguntas de n
 * Quais categorias tiveram o menor tempo de recompra?
 * Qual o ticket médio, máximo e mínimo dos pedidos?
 * Quanto tempo em média leva para um pedido ser entregue?
+* Quanto tempo em média leva para um pedido ser entregue por categoria?
 * Qual é a taxa de atraso na entrega?
 
 ## Tecnologias Utilizadas no Projeto
@@ -376,7 +377,7 @@ GROUP BY categoria
 ORDER BY media_dias_recompra_categoria ASC;
 ```
 
-### Achado
+### Resultado
 - Ao checar `COUNT(DISTINCT order_id)` por `(cliente, categoria)`, não há pares com 2+ pedidos distintos após os filtros (`order_status = 'delivered'` e categorias não nulas).
 - Resultado: nenhuma categoria apresenta recompra observável nessa configuração do dataset.
 
@@ -388,3 +389,326 @@ ORDER BY media_dias_recompra_categoria ASC;
 - No recorte utilizado, o Olist mostra alta proporção de clientes de 1ª compra por categoria.
 - Itens repetidos no mesmo pedido não são “recompra” e foram corretamente ignorados.
 
+## Qual o tempo médio, máximo e mínimo entre a data de realização do pedido e aprovação do pagamento, por meios de pagamento+
+
+Essa análise busca identificar quanto tempo (em dias) cada **método de pagamento** leva entre o momento da compra (`order_purchase_timestamp`) e a sua aprovação (`order_approved_at`).  
+Esse tipo de métrica é útil para entender atrasos no processo de aprovação financeira.  
+
+### Análise Exploratória e Qualidade dos Dados
+
+Para realizar essa análise, precisei antes entender os possíveis: status de cada pedido, e os  tipos de pagamentos.
+
+```sql
+SELECT DISTINCT order_status
+FROM olist_orders;
+```
+<p align="center">
+  <img src="docs/olist_status_result.png" alt="Query SELECT DISTINCT STATUS Olist" style="max-width:80%;">
+</p>
+
+```sql
+SELECT DISTINCT op.payment_type
+FROM olist_data.olist_order_payments op;
+```
+<p align="center">
+  <img src="docs/olist_paymentstype_result.png" alt="Query SELECT DISTINCT STATUS Olist" style="max-width:80%;">
+</p>
+
+Assim, entendemos quais são os tipos de dados e as possíveis interpretações na query principal.
+
+### Query utilizada:
+
+O processo foi dividido em três etapas principais:
+
+1. Filtrar os dados relevantes
+   - Consideramos apenas pedidos entregues.  
+   - Removemos os pagamentos inválidos (`not_defined`, `voucher`).  
+   - Excluímos pedidos cancelados ou indisponíveis.  
+
+2. Calcular a diferença entre as datas
+   - Usamos a função `DATEDIFF` para medir o intervalo (em dias) entre a data da compra (`order_purchase_timestamp`) e a aprovação do pagamento (`order_approved_at`).  
+   - Esse resultado foi armazenado em uma tabela temporária (`diff`) para facilitar a análise.  
+
+3. Consolidar por tipo de pagamento
+   - Para cada método de pagamento (`p_type`) calculamos:  
+     - `AVG(diff_date)` → tempo médio de aprovação.  
+     - `MIN(diff_date)` → tempo mínimo encontrado.  
+     - `MAX(diff_date)` → tempo máximo encontrado.  
+   - A ordenação foi feita pelo maior tempo máximo (`ORDER BY max_diff DESC`) para destacar os casos mais críticos.  
+
+Dessa forma conseguimos identificar quais métodos de pagamento aprovam mais rápido e quais demoram mais.
+    
+```sql
+ WITH order_type 
+AS(
+SELECT     op.order_id, 
+           op.payment_type AS p_type, 
+	       od.order_purchase_timestamp AS purchase, 
+		   od.order_approved_at        AS approved 
+FROM       olist_data.olist_order_payments op
+INNER JOIN olist_orders od
+ON   	   od.order_id = op.order_id
+WHERE 	   op.payment_type NOT IN ('not_defined','voucher')
+AND        od.order_status NOT IN ('canceled','unavailable')
+), diff 
+AS(
+SELECT    p_type, 
+		   DATEDIFF(approved,purchase) AS diff_date
+FROM       order_type
+)
+SELECT     d.p_type, 
+	       ROUND(AVG(d.diff_date)) AS avg_dif,
+           MAX(d.diff_date)        AS max_diff,
+           MIN(d.diff_date)        AS min_diff
+FROM       diff d
+GROUP BY   d.p_type
+ORDER BY   max_diff DESC;
+```
+### Resultado
+
+Assim, obtemos o resultado abaixo:
+
+<p align="center">
+  <img src="docs/olist_paymentstype_calc_result.png" alt="Query AVG, MAX, MIN payments type Olist" style="max-width:80%;">
+</p>
+
+* Cartão (crédito e débito): métodos mais confiáveis e rápidos, praticamente instantâneos.
+* Boleto: gera maior atraso médio e alta variabilidade no tempo de aprovação.
+* Negócio: incentivar pagamentos via cartão (promoções ou parcelamento sem juros) pode reduzir o tempo de processamento e melhorar a experiência do cliente, enquanto o boleto, apesar de inclusivo, aumenta a lentidão operacional.
+
+## Qual o ticket médio, máximo e mínimo dos pedidos?
+
+Para entender melhor o valor dos pedidos realizados na Olist, foi feita uma análise considerando todos os pagamentos por pedido.  
+Como visto previamente que alguns pedidos podem ter mais de um pagamento (parcelas ou diferentes métodos), foi necessário realizar a soma dos valores por `order_id` antes de calcular as estatísticas.
+
+- `AVG` → retorna o valor médio dos pedidos (ticket médio).  
+- `MAX` → retorna o maior valor encontrado em um pedido.  
+- `MIN` → retorna o menor valor encontrado em um pedido.  
+- O filtro `WHERE valores != 0` garante que não sejam considerados pedidos sem pagamento.
+  
+### Query utilizada:
+
+```sql
+WITH valor AS (
+  SELECT op.order_id, SUM(op.payment_value) AS valores
+  FROM olist_order_payments op
+  GROUP BY op.order_id
+)
+SELECT 
+  ROUND(AVG(valores),2) AS avg_payments,
+  MAX(valores) AS max_payments,
+  MIN(valores) AS min_payments
+FROM valor
+WHERE valores != 0;
+```
+### Resultado
+
+Rodando a query, obtemos as seguintes informações:
+
+<p align="center">
+  <img src="docs/olist_maxminavg_result.png" alt="Query MAX MIN AVG" style="max-width:80%;">
+</p>
+
+## Quanto tempo em média leva para um pedido ser entregue?
+
+### Análise Exploratória e Qualidade dos Dados
+
+Antes de simplesmente realizar a query, precisamos entender os dados e quais estão corretos.
+Para isso correlacionei os seguintes dados em um filtro de `SELECT DISTINCT order status`, `order_delivered_carrier_date`, `order_delivered_customer_date`, `order_estimated_delivery_date`. 
+Onde esses dados não são nulos, ou seja, possuem uma data de entrega para cada etapa do pedido.
+
+```sql
+SELECT DISTINCT order_status
+FROM olist_orders
+WHERE order_delivered_carrier_date IS NOT NULL
+  OR order_delivered_customer_date IS NOT NULL
+  OR order_estimated_delivery_date IS NOT NULL;
+```
+<p align="center">
+  <img src="docs/olist_statusorder_result.png" alt="Query verificação do status e data de entrega" style="max-width:80%;">
+</p>
+
+Feito isso, temos o resultado acima e logo entedemos que precisamos excluir alguns dados filtrando pelo status.
+
+### Query utilizada:
+
+Sendo assim, criamos uma tabela de dados com a query inicial que calcula a diferença entre datas, `order_purchase_timestamp` e `order_delivered_customer_date`.
+```sql
+WITH datas AS (
+SELECT 
+	   DATEDIFF(order_delivered_customer_date,order_purchase_timestamp) AS diff
+FROM   olist_orders
+WHERE  order_delivered_customer_date IS NOT NULL
+  AND  order_purchase_timestamp IS NOT NULL
+  AND  order_status NOT IN ('canceled','unavailable')
+)
+SELECT ROUND(AVG(diff)) AS avg_delivered_date
+FROM   datas;
+```
+### Resultado
+
+Por fim, o resultado no mostra uma média de 12 dias desde a data de efetivação por parte do cliente o pedido, até a confirmação do pedido entregue no endereço do consumidor.
+
+<p align="center">
+  <img src="docs/olist_avg_delivered_result.png" alt="Query verificação do status e data de entrega" style="max-width:80%;">
+</p>
+
+* Quanto tempo em média leva para um pedido ser entregue por categoria?
+
+Seguindo o mesmo pensamento da query anterior, mas agora vamos fazer uma junção com a tabela `olist_products` e as categorias dos produtos filtrando por `order_id` e a tabela `olist_order_items`.
+
+### Query utilizada:
+
+```sql
+WITH datas AS (
+SELECT     op.product_category_name AS category,
+	       DATEDIFF(od.order_delivered_customer_date,od.order_purchase_timestamp) AS diff
+FROM  	   olist_orders od
+INNER JOIN olist_order_items oi
+	    ON oi.order_id   = od.order_id
+INNER JOIN olist_products op
+		ON oi.product_id = op.product_id
+WHERE      order_delivered_customer_date IS NOT NULL
+  AND      order_purchase_timestamp      IS NOT NULL
+  AND      order_status NOT IN ('canceled','unavailable')
+  AND      op.product_category_name <> ""
+)
+SELECT category, ROUND(AVG(diff)) AS avg_delivered_date
+FROM datas
+GROUP BY   category
+ORDER BY   avg_delivered_date DESC
+LIMIT 10;
+```
+
+### Resultado
+
+Podemos observar que o primeiro item é "Moveis_escritorio", assim podemos interprertar que o prazo de entrega é maior devido ao produto precisar ser fabricado, ou o produto ter dimensões maiores causando um conflito na disponibilidade de entrega.
+
+<p align="center">
+  <img src="docs/olist_avg_delivered_category_result.png" alt="Query verificação do status e data de entrega" style="max-width:80%;">
+</p>
+
+## Qual é a taxa de atraso na entrega?
+
+### Lógica da Query  
+
+Para calcular a taxa de atraso nas entregas, seguimos os passos abaixo:  
+
+1. Comparação das datas  
+   - `order_delivered_customer_date` (data real da entrega)  
+   - `order_estimated_delivery_date` (data estimada de entrega)  
+
+2. Definição de regra do que é atraso
+   - Se `DATEDIFF(order_delivered_customer_date, order_estimated_delivery_date) > 0` → Pedido marcado como `1` (atrasado).  
+   - Caso contrário → Pedido marcado como `0` (entregue no prazo).  
+
+3. Construção da CTE (`atraso`)
+   - Criamos uma tabela temporária onde cada linha recebe `is_late = 1` ou `is_late = 0`.  
+
+4. Cálculo da média
+   - Calculamos `AVG(is_late)`.  
+   - Multiplicamos o resultado por 100 → percentual de pedidos atrasados.
+     
+### Query utilizada:
+
+```sql
+WITH atraso AS (
+SELECT 
+       CASE 
+           WHEN DATEDIFF(order_delivered_customer_date, order_estimated_delivery_date) > 0 THEN 1
+           ELSE 0
+       END AS is_late
+FROM olist_orders
+WHERE order_delivered_customer_date IS NOT NULL
+  AND order_estimated_delivery_date IS NOT NULL
+  AND order_status NOT IN ('canceled','unavailable')
+) 
+SELECT 
+       ROUND(AVG(is_late) * 100, 2) AS pct_late 
+FROM atraso;
+```
+### Resultado
+
+O resultado mostra a porcentagem de pedidos atrasados em relação ao total entregue.
+
+Esse indicador é fundamental para avaliar:
+* Eficiência logística da Olist.
+* Impacto no nível de serviço (SLAs de entrega).
+* Possíveis melhorias na previsão de prazos e na operação de transporte.
+
+<p align="center">
+  <img src="docs/olist_perct_delivered_result.png" alt="Query verificação do status e data de entrega" style="max-width:80%;">
+</p>
+
+# Olist Sales Dashboard — Power BI
+
+Análise de vendas e experiência do usuário com o dataset público **Olist** (Kaggle).  
+Foco: receita por estado/ano/categoria, métodos de pagamento, ticket médio e distribuição de reviews.
+
+> Aviso: dashboard não oficial, para fins educacionais. Fonte dos dados: Olist — Brazilian E-commerce Public Dataset (Kaggle).
+
+## Visão Geral
+- Stack: Power BI (modelagem e DAX), MySQL (ingestão/queries), GitHub Pages (publicação).
+- Destaques:
+  - Top 5 categorias **dinâmico** por contexto (estado/ano).
+  - Medidas de **% de reviews por nota** com `DIVIDE` + `ALL`.
+  - Tratamento de duplicidade via grão `(cliente, categoria, pedido, data)`.
+
+## Perguntas de Negócio
+- Quais estados/categorias mais vendem?
+- Como evolui o ticket médio por ano?
+- Como se distribuem as notas de review (1–5)?
+- Qual o tempo médio de entrega?
+- [Exploratória] Recompra por categoria: no recorte usado, 0 intervalos observáveis (alta proporção de primeira compra).
+
+## Prints
+
+Visualização abaixo do Dashboard Vendas:
+
+<p align="center">
+  <img src="dashboard/olist_dashboard_vendas.png" alt="Dashboard Vendas visualização" style="max-width:80%;">
+</p>
+
+Visualização abaixo do Dashboard Experiência do Usuário:
+
+<p align="center">
+  <img src="dashboard/olist_dashboard_experiencia.png" alt="Dashboard experiência do usuário visualização" style="max-width:80%;">
+</p>
+
+# Conclusão Geral
+
+## Conclusão do Projeto
+
+Este projeto teve como objetivo estruturar e analisar o Conjunto de Dados Públicos de E-commerce da Olist, disponível no Kaggle, aplicando conceitos de SQL para exploração, tratamento e análise de dados e Dashboard com a ferramenta Power BI.  
+
+Durante o desenvolvimento:  
+- Criamos um banco de dados relacional no MySQL a partir dos arquivos CSV.  
+- Estruturamos as tabelas com chaves primárias e relacionamentos para dar suporte às consultas analíticas.  
+- Realizamos queries exploratórias e avançadas, respondendo perguntas de negócio relevantes como:  
+  - Quais categorias tiveram maior e menor volume de vendas?  
+  - Qual o tempo médio de entrega dos pedidos?  
+  - Qual a taxa de atraso na entrega?  
+  - Qual o ticket médio das compras?  
+  - Quais padrões de recompra podem ser identificados?  
+- Aplicamos técnicas como CTEs, agregações, funções de data e janelas para consolidar métricas.  
+- Geramos visuais complementares em dashboards (Power BI/Tableau).
+
+### Principais insights
+- Cartão de crédito e débito → aprovação praticamente imediata.  
+- Boletos → apresentaram maior atraso médio e alta variabilidade.  
+- O tempo médio de entrega foi de aproximadamente 9 dias, variando entre categorias e anos.  
+- A taxa de atraso evidenciou que cerca de 6,77% dos pedidos chegaram após o prazo estimado, mostrando pontos de melhoria na logística.  
+
+## Conclusão Dashboard
+
+O dashboard consolida a visão de vendas da base pública da Olist, evidenciando:
+- Forte concentração de receita em poucos estados (com São Paulo liderando).
+- Predominância do cartão de crédito como método de pagamento.
+- As categorias Top 5 variam conforme o contexto (estado/ano).
+- O ticket médio mostra oscilação ao longo do período com tendência de melhora no último ano analisado.
+- Na experiência do usuário, a distribuição das notas de review ajuda a identificar satisfação e pontos de atenção, onde 58% estão avaliando em 5 de nota.
+- Um achado importante de qualidade/escopo de dados: ao medir recompra por categoria, não houve intervalos observáveis no recorte utilizado (pedidos “delivered” e categorias válidas), sugerindo alta proporção de primeiras compras por categoria. 
+
+###  Considerações finais
+O estudo demonstrou como SQL pode ser usado para responder perguntas reais de negócio e gerar indicadores estratégicos.  
+Além disso, reforça a importância da integração entre análise de dados, modelagem estatística e visualização, criando um portfólio sólido para projetos de Data Analytics.  
